@@ -155,6 +155,7 @@ struct CNodeState {
     //! The peer's address
     const CService address;
     //! Whether we have a fully established connection.
+    // wilbur: 仅指 outbound?
     bool fCurrentlyConnected;
     //! Accumulated misbehaviour score for this peer.
     int nMisbehavior;
@@ -369,6 +370,7 @@ bool MarkBlockAsInFlight(NodeId nodeid, const uint256& hash, const CBlockIndex* 
 }
 
 /** Check whether the last unknown block a peer advertised is not yet known. */
+// wilbur: 也就是如果之前的 unknown 已经有了 BlockIndex，则不算unknown 了，并置为 best 如果合适
 void ProcessBlockAvailability(NodeId nodeid) {
     CNodeState *state = State(nodeid);
     assert(state != nullptr);
@@ -384,6 +386,7 @@ void ProcessBlockAvailability(NodeId nodeid) {
 }
 
 /** Update tracking information about which blocks a peer is assumed to have. */
+// wilbur: 先处理之前的 unknown，然后再看新拿到的 block 是 unknown 还是 best
 void UpdateBlockAvailability(NodeId nodeid, const uint256 &hash) {
     CNodeState *state = State(nodeid);
     assert(state != nullptr);
@@ -444,6 +447,7 @@ bool TipMayBeStale(const Consensus::Params &consensusParams)
 }
 
 // Requires cs_main
+// wilbur: 最近约20个 block 可以直接取
 bool CanDirectFetch(const Consensus::Params &consensusParams)
 {
     return chainActive.Tip()->GetBlockTime() > GetAdjustedTime() - consensusParams.nPowTargetSpacing * 20;
@@ -853,6 +857,7 @@ void PeerLogicValidation::NewPoWValidBlock(const CBlockIndex *pindex, const std:
 
     LOCK(cs_main);
 
+    // wilbur: 只广播新生成的 block
     static int nHighestFastAnnounce = 0;
     if (pindex->nHeight <= nHighestFastAnnounce)
         return;
@@ -999,6 +1004,7 @@ static void RelayTransaction(const CTransaction& tx, CConnman* connman)
     CInv inv(MSG_TX, tx.GetHash());
     connman->ForEachNode([&inv](CNode* pnode)
     {
+        // wilbur: 会有过滤，不会往回发
         pnode->PushInventory(inv);
     });
 }
@@ -1014,6 +1020,7 @@ static void RelayAddress(const CAddress& addr, bool fReachable, CConnman* connma
     const CSipHasher hasher = connman->GetDeterministicRandomizer(RANDOMIZER_ID_ADDRESS_RELAY).Write(hashAddr << 32).Write((GetTime() + hashAddr) / (24*60*60));
     FastRandomContext insecure_rand;
 
+    // wilbur: 选nRelayNodes个本次 hashKey 最大的 node 发送地址
     std::array<std::pair<uint64_t, CNode*>,2> best{{{0, nullptr}, {0, nullptr}}};
     assert(nRelayNodes <= best.size());
 
@@ -1052,6 +1059,7 @@ void static ProcessGetBlockData(CNode* pfrom, const Consensus::Params& consensus
         fWitnessesPresentInARecentCompactBlock = fWitnessesPresentInMostRecentCompactBlock;
     }
 
+    // 确保在 chain 上
     bool need_activate_chain = false;
     {
         LOCK(cs_main);
@@ -1071,6 +1079,7 @@ void static ProcessGetBlockData(CNode* pfrom, const Consensus::Params& consensus
     } // release cs_main before calling ActivateBestChain
     if (need_activate_chain) {
         CValidationState dummy;
+        // wilbur: a_recent_block 肯定是可连上的
         ActivateBestChain(dummy, Params(), a_recent_block);
     }
 
@@ -1168,6 +1177,7 @@ void static ProcessGetBlockData(CNode* pfrom, const Consensus::Params& consensus
         }
 
         // Trigger the peer node to send a getblocks request for the next batch of inventory
+        // GETBLOCKS 满了时设置
         if (inv.hash == pfrom->hashContinue)
         {
             // Bypass PushInventory, this must send even if redundant,
@@ -1188,8 +1198,11 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
     std::deque<CInv>::iterator it = pfrom->vRecvGetData.begin();
     std::vector<CInv> vNotFound;
     const CNetMsgMaker msgMaker(pfrom->GetSendVersion());
+    // wiblur: 前边是 TXs，后边是 BLOCKs
     {
         LOCK(cs_main);
+        // 只处理最近的 TX，relay 中的或者 mempool 里的
+        // 旧的需要用 MSG_BLOCK 类
 
         while (it != pfrom->vRecvGetData.end() && (it->type == MSG_TX || it->type == MSG_WITNESS_TX)) {
             if (interruptMsgProc)
@@ -1256,6 +1269,7 @@ uint32_t GetFetchFlags(CNode* pfrom) {
     return nFetchFlags;
 }
 
+// wilbur: 用来处理最近的 block 的缺失 TXs, 请求方指定缺失的 TX 在 block.vtx 的索引
 inline void static SendBlockTransactions(const CBlock& block, const BlockTransactionsRequest& req, CNode* pfrom, CConnman* connman) {
     BlockTransactions resp(req);
     for (size_t i = 0; i < req.indexes.size(); i++) {
@@ -1315,6 +1329,7 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
             return true;
         }
 
+        // wilbur: headers必须连续
         uint256 hashLastBlock;
         for (const CBlockHeader& header : headers) {
             if (!hashLastBlock.IsNull() && header.hashPrevBlock != hashLastBlock) {
@@ -1333,6 +1348,7 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
 
     CValidationState state;
     CBlockHeader first_invalid_header;
+    // wilbur: 放到 mapBlockIndex 里记录
     if (!ProcessNewBlockHeaders(headers, state, chainparams, &pindexLast, &first_invalid_header)) {
         int nDoS;
         if (state.IsInvalid(nDoS)) {
