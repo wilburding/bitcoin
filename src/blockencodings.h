@@ -39,6 +39,7 @@ public:
         READWRITE(blockhash);
         uint64_t indexes_size = (uint64_t)indexes.size();
         READWRITE(COMPACTSIZE(indexes_size));
+        // wilbur: indexes 实际传输的是差分表示（同前一个的差）
         if (ser_action.ForRead()) {
             size_t i = 0;
             while (indexes.size() < indexes_size) {

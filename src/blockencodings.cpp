@@ -44,7 +44,8 @@ uint64_t CBlockHeaderAndShortTxIDs::GetShortID(const uint256& txhash) const {
 }
 
 
-
+// wilbur: 复原 shortid 对应的索引，并从 mempool 获取对应的 tx，如果都有，则说明 block 可以重建
+// 最后的 OK 只是说数据是干净的，但可能缺一些 TX
 ReadStatus PartiallyDownloadedBlock::InitData(const CBlockHeaderAndShortTxIDs& cmpctblock, const std::vector<std::pair<uint256, CTransactionRef>>& extra_txn) {
     if (cmpctblock.header.IsNull() || (cmpctblock.shorttxids.empty() && cmpctblock.prefilledtxn.empty()))
         return READ_STATUS_INVALID;
@@ -56,6 +57,7 @@ ReadStatus PartiallyDownloadedBlock::InitData(const CBlockHeaderAndShortTxIDs& c
     txn_available.resize(cmpctblock.BlockTxCount());
 
     int32_t lastprefilledindex = -1;
+    // wilbur: prefilled 目前看起来只有 coinbase
     for (size_t i = 0; i < cmpctblock.prefilledtxn.size(); i++) {
         if (cmpctblock.prefilledtxn[i].tx->IsNull())
             return READ_STATUS_INVALID;
@@ -77,6 +79,7 @@ ReadStatus PartiallyDownloadedBlock::InitData(const CBlockHeaderAndShortTxIDs& c
     // Because well-formed cmpctblock messages will have a (relatively) uniform distribution
     // of short IDs, any highly-uneven distribution of elements can be safely treated as a
     // READ_STATUS_FAILED.
+    // wilbur: shorttxid 到 tx 索引的映射，同时抵御可能的攻击
     std::unordered_map<uint64_t, uint16_t> shorttxids(cmpctblock.shorttxids.size());
     uint16_t index_offset = 0;
     for (size_t i = 0; i < cmpctblock.shorttxids.size(); i++) {
@@ -173,12 +176,14 @@ bool PartiallyDownloadedBlock::IsTxAvailable(size_t index) const {
     return txn_available[index] != nullptr;
 }
 
+// wilbur: OK 说明 Block 数据齐全其 check 没问题
 ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<CTransactionRef>& vtx_missing) {
     assert(!header.IsNull());
     uint256 hash = header.GetHash();
     block = header;
     block.vtx.resize(txn_available.size());
 
+    // wilbur: vtx_missing 是BLOCKTXN 中返回的 txn，按顺序对应 !txn_available 的索引
     size_t tx_missing_offset = 0;
     for (size_t i = 0; i < txn_available.size(); i++) {
         if (!txn_available[i]) {
