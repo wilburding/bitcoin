@@ -1198,7 +1198,6 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
     std::deque<CInv>::iterator it = pfrom->vRecvGetData.begin();
     std::vector<CInv> vNotFound;
     const CNetMsgMaker msgMaker(pfrom->GetSendVersion());
-    // wiblur: 前边是 TXs，后边是 BLOCKs
     {
         LOCK(cs_main);
         // 只处理最近的 TX，relay 中的或者 mempool 里的
@@ -1240,6 +1239,7 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
     } // release cs_main
 
     if (it != pfrom->vRecvGetData.end() && !pfrom->fPauseSend) {
+        // wilbur: 一次消息处理循环只处理一个 block（可能需要读磁盘，较耗时）, 防止阻塞
         const CInv &inv = *it;
         if (inv.type == MSG_BLOCK || inv.type == MSG_FILTERED_BLOCK || inv.type == MSG_CMPCT_BLOCK || inv.type == MSG_WITNESS_BLOCK) {
             it++;
@@ -1955,6 +1955,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
 
     else if (strCommand == NetMsgType::GETBLOCKS)
     {
+        // 旧同步IBD方法，不再主动使用
         CBlockLocator locator;
         uint256 hashStop;
         vRecv >> locator >> hashStop;
